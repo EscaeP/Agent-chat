@@ -78,6 +78,73 @@ function textProcess(text, operation) {
   }
 }
 
+// ===== ReAct / CoT & 自我修正支持工具 =====
+
+// 简单的推理步骤日志（仅内存 + 控制台），用于 CoT / ReAct 风格
+const reasoningLog = [];
+
+function logReasoningStep(step, detail = '') {
+  const entry = {
+    time: new Date().toISOString(),
+    step,
+    detail
+  };
+  reasoningLog.push(entry);
+  console.log('\n[ReAct] 推理步骤记录:', entry);
+  return {
+    success: true,
+    entry,
+    totalSteps: reasoningLog.length
+  };
+}
+
+// 清空推理日志，避免对话变长后干扰
+function clearReasoningLog() {
+  const count = reasoningLog.length;
+  reasoningLog.length = 0;
+  console.log(`\n[ReAct] 已清空推理日志，清除条数: ${count}`);
+  return {
+    success: true,
+    cleared: count
+  };
+}
+
+// 错误记录与简单自我修正提示工具
+function logErrorAndSuggestFix(errorMessage, context = '') {
+  const lower = (errorMessage || '').toLowerCase();
+  const suggestions = [];
+
+  if (lower.includes('json')) {
+    suggestions.push('检查 JSON 是否少逗号、少引号或多了尾逗号。');
+  }
+  if (lower.includes('timeout')) {
+    suggestions.push('考虑减小请求数据量或增加超时时间，或检查网络/服务是否可用。');
+  }
+  if (lower.includes('not found') || lower.includes('enoent')) {
+    suggestions.push('确认路径/资源名称是否正确，必要时打印当前工作目录或可用资源列表。');
+  }
+  if (lower.includes('unauthorized') || lower.includes('forbidden') || lower.includes('401') || lower.includes('403')) {
+    suggestions.push('检查 API Key / 鉴权信息是否配置正确，或是否有对应权限。');
+  }
+  if (lower.includes('syntax') || lower.includes('unexpected')) {
+    suggestions.push('检查最近修改的代码语法（括号、引号、分号等），可以尝试逐行缩小范围。');
+  }
+
+  // 默认泛化建议
+  if (suggestions.length === 0) {
+    suggestions.push('先精读错误信息，再根据关键字（如模块名、字段名）定位到最近的改动处进行检查。');
+  }
+
+  const result = {
+    errorMessage,
+    context,
+    suggestions
+  };
+
+  console.log('\n[Self-Correct] 错误记录与建议:', result);
+  return result;
+}
+
 // 工具定义（用于发送给 AI）
 const toolDefinitions = [
   {
@@ -153,6 +220,60 @@ const toolDefinitions = [
         required: ['text', 'operation']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'logReasoningStep',
+      description: '记录当前的思考/推理步骤，用于 CoT / ReAct 风格的显式推理链，便于后续自我审查与调试。',
+      parameters: {
+        type: 'object',
+        properties: {
+          step: {
+            type: 'string',
+            description: '当前这一步推理的简要描述，例如“分析用户需求”、“决定是否调用工具”等。'
+          },
+          detail: {
+            type: 'string',
+            description: '可选的详细推理内容或中间结论，便于后续回顾与自我修正。'
+          }
+        },
+        required: ['step']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'clearReasoningLog',
+      description: '清空当前会话中的推理步骤日志，通常在一个大任务完成或需要开始全新任务时调用。',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: []
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'logErrorAndSuggestFix',
+      description: '在遇到错误时记录错误信息，并根据常见模式给出简单的自我修正建议，辅助 Agent 决定下一步修复动作。',
+      parameters: {
+        type: 'object',
+        properties: {
+          errorMessage: {
+            type: 'string',
+            description: '遇到的错误信息原文（可以来自接口、终端、日志等）。'
+          },
+          context: {
+            type: 'string',
+            description: '可选的上下文描述，例如“调用某某接口时出错”、“解析某段 JSON 时出错”等。'
+          }
+        },
+        required: ['errorMessage']
+      }
+    }
   }
 ];
 
@@ -176,6 +297,15 @@ function executeTool(toolName, arguments_) {
         break;
       case 'textProcess':
         result = textProcess(arguments_.text, arguments_.operation);
+        break;
+      case 'logReasoningStep':
+        result = logReasoningStep(arguments_.step, arguments_.detail);
+        break;
+      case 'clearReasoningLog':
+        result = clearReasoningLog();
+        break;
+      case 'logErrorAndSuggestFix':
+        result = logErrorAndSuggestFix(arguments_.errorMessage, arguments_.context);
         break;
       default:
         result = { error: `未知的工具: ${toolName}` };

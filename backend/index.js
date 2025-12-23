@@ -178,7 +178,8 @@ function analyzeContentForTools(content, messages) {
       }
     }
     
-    if (expression && /[\+\-\*\/]/.test(expression)) {
+    // 需要同时包含运算符和至少一个数字，避免把单独的 "-"、"+" 等误判为表达式
+    if (expression && /[\+\-\*\/]/.test(expression) && /\d/.test(expression)) {
       // 验证表达式是否包含至少一个运算符
       toolCalls.push({
         id: `calc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -196,8 +197,8 @@ function analyzeContentForTools(content, messages) {
     }
   }
   
-  // 检测时间需求
-  if (/时间|现在几点|日期|今天|现在|当前时间/gi.test(userContent)) {
+  // 检测时间需求（去掉单独的“现在”，避免普通句子如“现在请你...”被误判）
+  if (/时间|现在几点|日期|今天|当前时间/gi.test(userContent)) {
     toolCalls.push({
       id: `time_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       type: 'function',
@@ -303,12 +304,23 @@ async function handleAgentRequest(messages, res) {
     conversationMessages.unshift({
       role: 'system',
       content: [
-        '你是一个工具增强的助理。',
+        '你是一个工具增强的助理，具备 ReAct（推理 + 行动）和简单自我修正能力。',
         '当用户请求计算或查询信息时：',
         '1）如果已经有明确的工具结果（例如 calculate 的 result），优先直接使用该结果回答，不要重复推导或再次计算相同表达式。',
         '2）不要重复整段解释两次。',
         '3）禁止输出 HTML 源码或转义形式（例如 &lt;p&gt;、&lt;br&gt; 等），统一使用纯文本或 Markdown。',
-        '4）如果没有必要，不要重复之前已经说过的内容。'
+        '4）如果没有必要，不要重复之前已经说过的内容。',
+        '',
+        '【推理 / ReAct 相关要求】',
+        '5）在处理复杂任务时，请在内部进行分步思考；如有必要，可以调用 logReasoningStep 工具，记录关键推理步骤和中间结论（step 用一句话概括，detail 可写更详细原因）。',
+        '6）当一个大任务完成或用户显式切换到全新话题时，可以调用 clearReasoningLog 清空旧的推理记录，避免后续被旧上下文干扰。',
+        '',
+        '【错误处理与自我修正】',
+        '7）当你在调用接口、运行代码或使用其他工具时遇到错误，请调用 logErrorAndSuggestFix：',
+        '   - 将完整错误信息传入 errorMessage；',
+        '   - 将当前正在做的事情简要写入 context（例如“调用某某工具时出错”、“解析某段 JSON 时出错”）；',
+        '   - 阅读返回的 suggestions，根据其中的提示调整你的计划和下一步操作。',
+        '8）如果连续两次尝试都仍然失败，请停止盲目重试，向用户清晰说明你已尝试的步骤、看到的错误以及后续可行的人工排查思路。'
       ].join('\n')
     });
     // 系统消息插入后，用户消息索引整体向后移动 1，需要同步更新
