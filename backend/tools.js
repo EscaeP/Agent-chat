@@ -46,24 +46,12 @@ async function searchWeb(query, limit = 5) {
   console.log(`🔍 使用百度百科搜索: "${query}"`);
   
   try {
-    // 1. 首先尝试百度百科API
+
     const baiduResult = await searchWithBaiduBaike(query, limit);
     if (baiduResult.success && baiduResult.results.length > 0) {
       console.log(`✅ 百度百科搜索成功，找到 ${baiduResult.results.length} 条结果`);
       return baiduResult;
     }
-    
-    // 2. 如果百度百科没找到，尝试百度网页搜索
-    const baiduWebResult = await searchWithBaiduWeb(query, limit);
-    if (baiduWebResult.success) {
-      console.log(`✅ 百度网页搜索成功，找到 ${baiduWebResult.results.length} 条结果`);
-      return baiduWebResult;
-    }
-    
-    // 3. 都失败，返回知识库数据
-    console.log('⚠️ 在线搜索失败，返回本地知识库数据');
-    return getLocalKnowledgeData(query);
-    
   } catch (error) {
     console.error('❌ 百度搜索失败:', error.message);
     return getLocalKnowledgeData(query, error.message);

@@ -295,7 +295,7 @@ function analyzeContentForTools(content, messages) {
       .replace(/搜索|查找|找|查询|搜索一下|帮我搜/gi, '')
       .replace(/关于|的|信息/gi, '')
       .trim();
-    if (searchQuery && searchQuery.length > 2) {
+    if (searchQuery && searchQuery.length > 1) {
       toolCalls.push({
         id: `search_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         type: 'function',
