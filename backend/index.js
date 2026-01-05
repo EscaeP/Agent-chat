@@ -705,14 +705,38 @@ async function handleAgentRequest(messages, res, userId = 'default_user') {
     }
   }
 
+  // 获取用户偏好和历史聊天记录
+  const userPreferences = userPreferencesManager.getPreferences(userId);
+  const recentChatHistory = userPreferencesManager.getChatHistory(userId, 10); // 获取最近10条聊天记录
+  
   // 在对话最前面添加系统指令，约束模型回答风格，避免重复讲解和输出 HTML 源码
   const hasSystemMessage = conversationMessages.some(m => m.role === 'system');
   if (!hasSystemMessage) {
+    // 构建用户关键信息
+    let userKeyInfo = '';
+    if (Object.keys(userPreferences).length > 0) {
+      userKeyInfo += '【用户偏好】\n';
+      for (const [key, value] of Object.entries(userPreferences)) {
+        userKeyInfo += `- ${key}: ${value}\n`;
+      }
+      userKeyInfo += '\n';
+    }
+    
+    if (recentChatHistory.length > 0) {
+      userKeyInfo += '【最近聊天记录】\n';
+      for (const msg of recentChatHistory.slice(-5)) { // 只显示最近5条
+        const role = msg.role === 'user' ? '用户' : '助手';
+        userKeyInfo += `${role}: ${msg.content.substring(0, 50)}${msg.content.length > 50 ? '...' : ''}\n`;
+      }
+      userKeyInfo += '\n';
+    }
+    
     conversationMessages.unshift({
       role: 'system',
       content: [
         '你是一个 ReAct (Reasoning + Acting) Agent，具备工具调用和自我修正能力。',
         '',
+        userKeyInfo,
         '【可用工具】',
         '- calculate: 数学计算（当用户需要计算时必须使用）',
         '- getCurrentTime: 获取当前时间（当用户询问时间时必须使用）',
