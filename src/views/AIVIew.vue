@@ -116,6 +116,22 @@ const renderMarkdown = (content) => {
   }
 }
 
+// 提取思维链部分
+const getReasoningChain = (content) => {
+  if (!content) return ''
+  if (!content.includes('Final Answer')) return content
+  const finalAnswerIndex = content.indexOf('Final Answer')
+  return content.substring(0, finalAnswerIndex)
+}
+
+// 提取最终答案部分
+const getFinalAnswer = (content) => {
+  if (!content) return ''
+  if (!content.includes('Final Answer')) return content
+  const finalAnswerIndex = content.indexOf('Final Answer')
+  return content.substring(finalAnswerIndex)
+}
+
 // 滚动到底部
 const scrollToBottom = () => {
   nextTick(() => {
@@ -230,11 +246,21 @@ const sendMessage = async () => {
               break;
             }
             
+            // 处理思维链消息
+            if (json.type === 'reasoning') {
+              // 思维链消息，添加到AI回复中
+              aiReply.content += '\n' + json.content + '\n';
+              // 强制更新视图
+              messages.value = [...messages.value];
+              scrollToBottom();
+              continue;
+            }
+            
             // 处理工具调用消息（不显示给用户，只在后台处理）
             if (json.type === 'tool_call') {
               // 不添加工具调用消息到界面，只在控制台记录
               console.log('工具调用:', json.tool_name, json.tool_args);
-              continue
+              continue;
             }
             
             if (json.choices && json.choices.length > 0) {
@@ -314,11 +340,53 @@ onMounted(() => {
       >
         <!-- 普通消息 -->
         <div v-if="message.role !== 'tool_call'" class="message-content">
-          <div 
-            v-if="message.content" 
-            class="markdown-body"
-            v-html="renderMarkdown(message.content)"
-          ></div>
+          <!-- AI消息：支持思维链折叠 -->
+          <div v-if="message.role === 'assistant'">
+            <!-- 分离思维链和最终答案 -->
+            <div v-if="message.content.includes('Final Answer')" class="ai-message-content">
+              <!-- 思维链部分 -->
+              <div class="reasoning-section" v-if="message.content.includes('Thought') || message.content.includes('Action') || message.content.includes('Observation')">
+                <div 
+                  class="foldable-toggle"
+                  @click="message.folded = !message.folded"
+                >
+                  <span class="foldable-icon">{{ message.folded ? '▶️' : '▼️' }}</span>
+                  <span class="foldable-text">{{ message.folded ? '展开思维链' : '折叠思维链' }}</span>
+                </div>
+                <div 
+                  class="reasoning-content"
+                  v-if="!message.folded"
+                >
+                  <div 
+                    class="markdown-body"
+                    v-html="renderMarkdown(getReasoningChain(message.content))"
+                  ></div>
+                </div>
+              </div>
+              <!-- 最终答案部分 -->
+              <div class="final-answer-section">
+                <div 
+                  class="markdown-body"
+                  v-html="renderMarkdown(getFinalAnswer(message.content))"
+                ></div>
+              </div>
+            </div>
+            <!-- 普通AI消息 -->
+            <div v-else>
+              <div 
+                class="markdown-body"
+                v-html="renderMarkdown(message.content)"
+              ></div>
+            </div>
+          </div>
+          <!-- 用户消息 -->
+          <div v-else>
+            <div 
+              v-if="message.content" 
+              class="markdown-body"
+              v-html="renderMarkdown(message.content)"
+            ></div>
+          </div>
           <!-- 隐藏工具调用信息，不显示给用户 -->
         </div>
         
@@ -470,6 +538,62 @@ onMounted(() => {
   background-color: #0284c7;
   color: white;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+/* 思维链折叠样式 */
+.ai-message-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.reasoning-section {
+  background-color: #f0f9ff;
+  border: 1px solid #e0f2fe;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.foldable-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background-color: #e0f2fe;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-weight: 500;
+  user-select: none;
+}
+
+.foldable-toggle:hover {
+  background-color: #bae6fd;
+}
+
+.foldable-icon {
+  font-size: 14px;
+  transition: transform 0.2s ease;
+}
+
+.foldable-text {
+  font-size: 14px;
+  color: #0369a1;
+}
+
+.reasoning-content {
+  padding: 12px;
+  background-color: #f0f9ff;
+  max-height: 500px;
+  overflow-y: auto;
+  transition: all 0.3s ease;
+}
+
+.final-answer-section {
+  background-color: #fef3c7;
+  border: 1px solid #fde68a;
+  border-radius: 12px;
+  padding: 16px;
+  font-weight: 500;
 }
 
 /* 工具调用消息样式 */
