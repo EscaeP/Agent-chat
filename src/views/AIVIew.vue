@@ -119,16 +119,16 @@ const renderMarkdown = (content) => {
 // 提取思维链部分
 const getReasoningChain = (content) => {
   if (!content) return ''
-  if (!content.includes('Final Answer')) return content
-  const finalAnswerIndex = content.indexOf('Final Answer')
+  if (!content.includes('**Final Answer:**')) return content
+  const finalAnswerIndex = content.indexOf('**Final Answer:**')
   return content.substring(0, finalAnswerIndex)
 }
 
 // 提取最终答案部分
 const getFinalAnswer = (content) => {
   if (!content) return ''
-  if (!content.includes('Final Answer')) return content
-  const finalAnswerIndex = content.indexOf('Final Answer')
+  if (!content.includes('**Final Answer:**')) return content
+  const finalAnswerIndex = content.indexOf('**Final Answer:**')
   return content.substring(finalAnswerIndex)
 }
 
@@ -350,12 +350,12 @@ onMounted(() => {
                   class="foldable-toggle"
                   @click="message.folded = !message.folded"
                 >
-                  <span class="foldable-icon">{{ message.folded ? '▶️' : '▼️' }}</span>
-                  <span class="foldable-text">{{ message.folded ? '展开思维链' : '折叠思维链' }}</span>
+                  <span class="foldable-icon">{{ (message.folded !== false) ? '▶️' : '▼️' }}</span>
+                  <span class="foldable-text">{{ (message.folded !== false) ? '展开思维链' : '折叠思维链' }}</span>
                 </div>
                 <div 
                   class="reasoning-content"
-                  v-if="!message.folded"
+                  v-if="message.folded === false"
                 >
                   <div 
                     class="markdown-body"
