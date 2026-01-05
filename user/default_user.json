@@ -1,0 +1,31 @@
+{
+  "userId": "default_user",
+  "preferences": {},
+  "chatHistory": [
+    {
+      "role": "assistant",
+      "content": "你好！我是你的AI Agent助手，我可以使用工具来帮助你完成任务。我可以进行计算、搜索、文本处理等操作。有什么可以帮助你的吗？",
+      "timestamp": "2026-01-05T09:56:53.020Z"
+    },
+    {
+      "role": "user",
+      "content": "计算45+5",
+      "timestamp": "2026-01-05T09:56:53.021Z"
+    },
+    {
+      "role": "assistant",
+      "content": "你好！我是你的AI Agent助手，我可以使用工具来帮助你完成任务。我可以进行计算、搜索、文本处理等操作。有什么可以帮助你的吗？",
+      "timestamp": "2026-01-05T09:57:29.356Z"
+    },
+    {
+      "role": "user",
+      "content": "计算45+66",
+      "timestamp": "2026-01-05T09:57:29.357Z"
+    },
+    {
+      "role": "assistant",
+      "content": "✅ **Final Answer:**\n计算表达式 45+66 的结果为：111\n",
+      "timestamp": "2026-01-05T09:57:30.978Z"
+    }
+  ]
+}

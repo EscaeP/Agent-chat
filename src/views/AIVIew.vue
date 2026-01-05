@@ -183,14 +183,15 @@ const sendMessage = async () => {
         } : {})
       }))
 
-    // 调用后端API
+    // 调用后端API，包含默认用户ID
     const response = await fetch('http://localhost:3000/api/chat', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({ 
-        messages: apiMessages
+        messages: apiMessages,
+        userId: 'default_user' // 默认用户ID
       })
     })
 
