@@ -2,6 +2,7 @@ const http = require('http');
 const https = require('https');
 const dotenv = require('dotenv');
 const { toolDefinitions, executeTool } = require('./tools');
+const userPreferencesManager = require('./userPreferences');
 
 // 加载环境变量
 dotenv.config();
@@ -658,13 +659,14 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const requestData = JSON.parse(body);
-        const { messages } = requestData;
+        const { messages, userId = 'default_user' } = requestData;
         
         console.log('=== 收到请求 ===');
+        console.log('用户ID:', userId);
         console.log('消息:', messages);
         
         // 所有请求都使用流式处理（支持 Agent 模式）
-        handleAgentRequest(messages, res);
+        handleAgentRequest(messages, res, userId);
       } catch (error) {
         console.error('解析请求体错误:', error);
         res.statusCode = 400;
@@ -684,7 +686,7 @@ const server = http.createServer((req, res) => {
 });
 
 // Agent 请求处理（支持工具调用）
-async function handleAgentRequest(messages, res) {
+async function handleAgentRequest(messages, res, userId = 'default_user') {
   // 设置SSE响应头
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -695,15 +697,46 @@ async function handleAgentRequest(messages, res) {
   let maxIterations = 10; // 防止无限循环
   let iteration = 0;
   let lastUserMessageIndex = messages.filter(m => m.role === 'user').length - 1; // 记录最后一条用户消息的索引
+  
+  // 保存所有用户消息到聊天历史
+  for (const message of messages) {
+    if (message.role === 'user' || message.role === 'assistant') {
+      userPreferencesManager.saveChatMessage(userId, message);
+    }
+  }
 
+  // 获取用户偏好和历史聊天记录
+  const userPreferences = userPreferencesManager.getPreferences(userId);
+  const recentChatHistory = userPreferencesManager.getChatHistory(userId, 10); // 获取最近10条聊天记录
+  
   // 在对话最前面添加系统指令，约束模型回答风格，避免重复讲解和输出 HTML 源码
   const hasSystemMessage = conversationMessages.some(m => m.role === 'system');
   if (!hasSystemMessage) {
+    // 构建用户关键信息
+    let userKeyInfo = '';
+    if (Object.keys(userPreferences).length > 0) {
+      userKeyInfo += '【用户偏好】\n';
+      for (const [key, value] of Object.entries(userPreferences)) {
+        userKeyInfo += `- ${key}: ${value}\n`;
+      }
+      userKeyInfo += '\n';
+    }
+    
+    if (recentChatHistory.length > 0) {
+      userKeyInfo += '【最近聊天记录】\n';
+      for (const msg of recentChatHistory.slice(-5)) { // 只显示最近5条
+        const role = msg.role === 'user' ? '用户' : '助手';
+        userKeyInfo += `${role}: ${msg.content.substring(0, 50)}${msg.content.length > 50 ? '...' : ''}\n`;
+      }
+      userKeyInfo += '\n';
+    }
+    
     conversationMessages.unshift({
       role: 'system',
       content: [
         '你是一个 ReAct (Reasoning + Acting) Agent，具备工具调用和自我修正能力。',
         '',
+        userKeyInfo,
         '【可用工具】',
         '- calculate: 数学计算（当用户需要计算时必须使用）',
         '- getCurrentTime: 获取当前时间（当用户询问时间时必须使用）',
@@ -1184,6 +1217,7 @@ async function handleAgentRequest(messages, res) {
     
     // === ReAct: Final Answer ===
     // 将 Final Answer 作为一个单独的消息发送（不可折叠，直接显示）
+    const finalAnswer = `✅ **Final Answer:**\n${assistantContent}\n`;
     const finalAnswerChunk = {
       id: `msg_${Date.now()}`,
       object: 'chat.completion.chunk',
@@ -1191,7 +1225,7 @@ async function handleAgentRequest(messages, res) {
       model: 'react-agent',
       choices: [{
         index: 0,
-        delta: { role: 'assistant', content: `✅ **Final Answer:**\n${assistantContent}\n` },
+        delta: { role: 'assistant', content: finalAnswer },
         finish_reason: 'stop'
       }],
       metadata: {
@@ -1200,6 +1234,13 @@ async function handleAgentRequest(messages, res) {
         messageType: 'final_answer'
       }
     };
+    
+    // 保存助手的最终回复到聊天历史
+    userPreferencesManager.saveChatMessage(userId, {
+      role: 'assistant',
+      content: finalAnswer
+    });
+    
     res.write(`data: ${JSON.stringify(finalAnswerChunk)}\n\n`);
     
     res.write('data: [DONE]\n\n');
