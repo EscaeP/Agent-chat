@@ -1,5 +1,7 @@
 // Agent 工具库
 
+const axios = require('axios');
+
 // 计算器工具
 function calculate(expression) {
   try {
@@ -41,7 +43,6 @@ function getCurrentTime(format = 'full') {
   }
 }
 
-const axios = require('axios');
 async function searchWeb(query, limit = 5) {
   console.log(`🔍 使用百度百科搜索: "${query}"`);
   
@@ -63,6 +64,7 @@ async function searchWithBaiduBaike(query, limit = 5) {
   console.log(`📚 查询百度百科: "${query}"`);
   
   try {
+
     const response = await axios.get(`https://baike.baidu.com/item/${encodeURIComponent(query)}`, {
       timeout: 12000,
       headers: {
@@ -333,6 +335,166 @@ async function searchWithBaiduBaike(query, limit = 5) {
   }
 }
 
+// 百度图片搜索工具
+async function searchImages(query, limit = 10) {console.log(`🖼️ 搜索图片: "${query}"`);
+  
+  try {
+    const results = [];
+    const imgUrls = [];
+    
+    // 尝试使用百度图片搜索的JSON API
+    try {
+      const response = await axios.get(`https://image.baidu.com/search/acjson?tn=resultjson_com&logid=&ipn=rj&ct=201326592&is=&fp=result&fr=&word=${encodeURIComponent(query)}&queryWord=${encodeURIComponent(query)}&cl=2&lm=-1&ie=utf-8&oe=utf-8&adpicid=&st=-1&z=&ic=0&hd=&latest=&copyright=&s=&se=&tab=&width=&height=&face=0&istype=2&qc=&nc=1&expermode=&nojc=&isAsync=&pn=30&rn=30&gsm=1e`, {
+        timeout: 12000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'application/json, text/plain, */*',
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'Referer': 'https://image.baidu.com/'
+        }
+      });
+      
+      const data = response.data;
+      console.log(`📄 收到JSON数据`);
+      
+      // 从百度API返回的JSON数据中提取图片URL
+      if (data && data.data && Array.isArray(data.data)) {
+        for (const item of data.data) {
+          if (item.thumbURL && imgUrls.length < limit) {
+            imgUrls.push(item.thumbURL);
+          }
+        }
+      }
+      
+      console.log(`✅ 从JSON API提取到 ${imgUrls.length} 张图片`);
+    } catch (jsonError) {
+      console.log('JSON API调用失败:', jsonError.message);
+    }
+    
+    // 如果JSON API没有找到足够的图片，尝试使用百度图片搜索的HTML页面
+    if (imgUrls.length < limit) {
+      console.log('JSON API图片不足，尝试解析HTML页面...');
+      
+      try {
+        const htmlResponse = await axios.get(`https://image.baidu.com/search/index?tn=baiduimage&word=${encodeURIComponent(query)}`, {
+          timeout: 12000,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Referer': 'https://image.baidu.com/'
+          }
+        });
+        
+        const html = htmlResponse.data;
+        console.log(`📄 收到HTML，长度: ${(html.length / 1024).toFixed(1)} KB`);
+        
+        // 尝试多种正则表达式提取图片URL
+        const regexes = [
+          { regex: /"objURL":"([^"]+)"/g, name: "objURL" },
+          { regex: /"thumbURL":"([^"]+)"/g, name: "thumbURL" },
+          { regex: /"middleURL":"([^"]+)"/g, name: "middleURL" },
+          { regex: /"replaceURL":"([^"]+)"/g, name: "replaceURL" },
+          { regex: /img src="([^"]+)"/g, name: "img src" }
+        ];
+        
+        for (const { regex, name } of regexes) {
+          if (imgUrls.length >= limit) break;
+          
+          let match;
+          const initialCount = imgUrls.length;
+          
+          while ((match = regex.exec(html)) !== null && imgUrls.length < limit) {
+            const url = match[1];
+            // 确保URL是有效的HTTP/HTTPS URL，并且不在已收集的URL中
+            if (url && url.startsWith('http') && !imgUrls.includes(url)) {
+              // 尝试解码URL（百度图片URL可能被编码）
+              try {
+                const decodedUrl = decodeURIComponent(url);
+                if (!imgUrls.includes(decodedUrl)) {
+                  imgUrls.push(decodedUrl);
+                }
+              } catch (e) {
+                // 如果解码失败，直接使用原始URL
+                imgUrls.push(url);
+              }
+            }
+          }
+          
+          const addedCount = imgUrls.length - initialCount;
+          if (addedCount > 0) {
+            console.log(`从 ${name} 提取到 ${addedCount} 张图片`);
+          }
+        }
+      } catch (htmlError) {
+        console.log('HTML页面解析失败:', htmlError.message);
+      }
+    }
+    
+    // 构建结果
+    results.push(`🖼️ **图片搜索结果**: "${query}"`);
+    results.push(`找到 ${imgUrls.length} 张相关图片:`);
+    
+    // 添加图片URL
+    imgUrls.forEach((url, index) => {
+      results.push(`![图片${index + 1}](${url})`);
+    });
+    
+    console.log(`✅ 图片搜索完成，找到 ${imgUrls.length} 张图片`);
+    
+    return {
+      query: query,
+      results: results,
+      count: imgUrls.length,
+      success: true,
+      source: '图片搜索',
+      images: imgUrls
+    };
+    
+  } catch (error) {
+    console.error('图片搜索失败:', error.message);
+    return {
+      query: query,
+      results: [`❌ 图片搜索失败: ${error.message}`],
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+// 辅助函数：检查文本是否包含过多特殊字符
+function hasTooManySpecialChars(text) {
+  const specialChars = /[^\u4e00-\u9fa5a-zA-Z0-9\s，。！？；：,.!?;:]/g;
+  const matches = text.match(specialChars);
+  return matches && matches.length > text.length * 0.3; // 特殊字符超过30%则认为有问题
+}
+
+// 辅助函数：获取增强的本地知识
+function getEnhancedLocalKnowledge(query) {
+  // 简单的本地知识示例，实际应用中可以扩展为更复杂的本地知识库
+  const localKnowledge = {
+    '猫': [
+      '猫是一种常见的家养动物，被称为人类的伴侣动物。',
+      '猫具有出色的狩猎能力，擅长捕捉老鼠等小型动物。',
+      '猫的平均寿命约为12-15年。'
+    ],
+    '狗': [
+      '狗是人类最早驯化的动物之一，被称为人类最忠实的朋友。',
+      '狗具有高度的智力和适应能力，可用于各种工作，如导盲、搜救等。',
+      '狗的品种繁多，不同品种具有不同的特征和用途。'
+    ]
+  };
+  
+  return localKnowledge[query] || [];
+}
+
 // 文本处理工具
 function textProcess(text, operation) {
   switch (operation) {
@@ -384,39 +546,119 @@ function clearReasoningLog() {
   };
 }
 
-// 错误记录与简单自我修正提示工具
+// 错误记录与详细自我修正提示工具
 function logErrorAndSuggestFix(errorMessage, context = '') {
   const lower = (errorMessage || '').toLowerCase();
   const suggestions = [];
+  const errorType = [];
 
+  // 1. 识别错误类型
   if (lower.includes('json')) {
-    suggestions.push('检查 JSON 是否少逗号、少引号或多了尾逗号。');
+    errorType.push('JSON解析错误');
+    suggestions.push('步骤1：检查JSON格式是否完整，确保所有字符串用双引号包裹');
+    suggestions.push('步骤2：检查是否缺少逗号分隔符或多了尾逗号');
+    suggestions.push('步骤3：确认所有括号和引号都正确配对');
+    suggestions.push('示例：正确格式 {"key": "value"}，错误格式 {key: "value"} 或 {"key": "value",}');
   }
+  
   if (lower.includes('timeout')) {
-    suggestions.push('考虑减小请求数据量或增加超时时间，或检查网络/服务是否可用。');
+    errorType.push('超时错误');
+    suggestions.push('步骤1：检查网络连接是否正常');
+    suggestions.push('步骤2：确认目标服务是否可用');
+    suggestions.push('步骤3：考虑减小请求数据量或增加超时时间');
+    suggestions.push('步骤4：对于搜索工具，尝试使用更简洁的查询关键词');
   }
+  
   if (lower.includes('not found') || lower.includes('enoent')) {
-    suggestions.push('确认路径/资源名称是否正确，必要时打印当前工作目录或可用资源列表。');
+    errorType.push('资源未找到错误');
+    suggestions.push('步骤1：确认路径或资源名称是否正确');
+    suggestions.push('步骤2：检查资源是否存在');
+    suggestions.push('步骤3：对于搜索工具，尝试使用不同的关键词或更通用的术语');
+    suggestions.push('步骤4：检查拼写是否正确');
   }
+  
   if (lower.includes('unauthorized') || lower.includes('forbidden') || lower.includes('401') || lower.includes('403')) {
-    suggestions.push('检查 API Key / 鉴权信息是否配置正确，或是否有对应权限。');
+    errorType.push('权限错误');
+    suggestions.push('步骤1：检查API Key是否配置正确');
+    suggestions.push('步骤2：确认是否有访问该资源的权限');
+    suggestions.push('步骤3：检查认证信息是否过期');
   }
+  
   if (lower.includes('syntax') || lower.includes('unexpected')) {
-    suggestions.push('检查最近修改的代码语法（括号、引号、分号等），可以尝试逐行缩小范围。');
+    errorType.push('语法错误');
+    suggestions.push('步骤1：检查最近修改的代码语法');
+    suggestions.push('步骤2：确认括号、引号、分号等是否正确配对');
+    suggestions.push('步骤3：尝试逐行缩小错误范围');
+    suggestions.push('步骤4：对于计算表达式，检查运算符是否正确使用');
+  }
+  
+  if (lower.includes('nan') || lower.includes('infinite')) {
+    errorType.push('计算结果异常');
+    suggestions.push('步骤1：检查计算表达式是否正确');
+    suggestions.push('步骤2：确认是否有除以零的情况');
+    suggestions.push('步骤3：检查输入数值是否合理');
+    suggestions.push('步骤4：尝试分解复杂表达式为多个简单步骤');
+  }
+  
+  if (lower.includes('parameter') || lower.includes('argument')) {
+    errorType.push('参数错误');
+    suggestions.push('步骤1：检查必填参数是否全部提供');
+    suggestions.push('步骤2：确认参数类型是否正确');
+    suggestions.push('步骤3：检查参数值是否在有效范围内');
+    suggestions.push('步骤4：参考工具文档确认正确的参数格式');
+  }
+  
+  if (lower.includes('tool') || lower.includes('function')) {
+    errorType.push('工具调用错误');
+    suggestions.push('步骤1：确认工具名称是否正确');
+    suggestions.push('步骤2：检查工具参数是否符合要求');
+    suggestions.push('步骤3：确认工具是否支持当前操作');
+    suggestions.push('步骤4：检查工具是否已正确加载');
   }
 
-  // 默认泛化建议
-  if (suggestions.length === 0) {
-    suggestions.push('先精读错误信息，再根据关键字（如模块名、字段名）定位到最近的改动处进行检查。');
+  // 2. 针对不同工具的特定建议
+  if (context.includes('calculate')) {
+    suggestions.push('【计算工具特定建议】：确保表达式中包含有效的运算符和数字，避免使用特殊字符');
+  }
+  
+  if (context.includes('searchWeb')) {
+    suggestions.push('【搜索工具特定建议】：使用更简洁、更准确的关键词，避免使用过长或过于复杂的查询');
+  }
+  
+  if (context.includes('textProcess')) {
+    suggestions.push('【文本处理工具特定建议】：确认操作类型是否支持，文本内容是否有效');
+  }
+
+  // 3. 通用修正流程
+  suggestions.push('\n通用修正流程：');
+  suggestions.push('1. 仔细阅读错误信息，定位错误类型和位置');
+  suggestions.push('2. 根据上述建议制定修正方案');
+  suggestions.push('3. 执行修正操作');
+  suggestions.push('4. 验证修正结果是否正确');
+  suggestions.push('5. 如果问题仍然存在，尝试不同的修正方法或向用户寻求更多信息');
+
+  // 4. 默认泛化建议（如果没有匹配到特定错误类型）
+  if (errorType.length === 0) {
+    errorType.push('未知错误');
+    suggestions.unshift('步骤1：先精读错误信息，识别关键错误关键词');
+    suggestions.unshift('步骤2：根据上下文定位可能出现问题的代码或操作');
+    suggestions.unshift('步骤3：检查最近的操作是否符合预期');
+    suggestions.unshift('步骤4：尝试简化操作或使用不同的方法');
   }
 
   const result = {
     errorMessage,
     context,
-    suggestions
+    errorType,
+    suggestions,
+    timestamp: new Date().toISOString(),
+    detailedAnalysis: {
+      errorKeywords: lower.match(/\b(?:error|failed|invalid|unexpected|missing|required)\b/gi) || [],
+      contextKeywords: context.match(/\b(?:tool|function|parameter|argument|expression|query|api)\b/gi) || []
+    }
   };
 
-  console.log('\n[Self-Correct] 错误记录与建议:', result);
+  console.log('\n[Self-Correct] 错误记录与详细建议:', result);
   return result;
 }
 
@@ -477,6 +719,28 @@ const toolDefinitions = [
   {
     type: 'function',
     function: {
+      name: 'searchImages',
+      description: '在网络上搜索图片。当用户需要查找图片、照片、插图等视觉内容时使用此工具。',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: '图片搜索关键词或描述'
+          },
+          limit: {
+            type: 'integer',
+            description: '返回图片的最大数量，默认为5',
+            default: 5
+          }
+        },
+        required: ['query']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'textProcess',
       description: '对文本进行各种处理操作，如大小写转换、反转、统计等。',
       parameters: {
@@ -521,7 +785,7 @@ const toolDefinitions = [
     type: 'function',
     function: {
       name: 'clearReasoningLog',
-      description: '清空当前会话中的推理步骤日志，通常在一个大任务完成或需要开始全新任务时调用。',
+      description: '清空当前会话中的推理步骤日志，通常在一个大任务完成或用户显式切换到全新话题时调用。',
       parameters: {
         type: 'object',
         properties: {},
@@ -533,7 +797,7 @@ const toolDefinitions = [
     type: 'function',
     function: {
       name: 'logErrorAndSuggestFix',
-      description: '在遇到错误时记录错误信息，并根据常见模式给出简单的自我修正建议，辅助 Agent 决定下一步修复动作。',
+      description: '在遇到错误时记录错误信息，识别错误类型，并根据常见模式给出详细的自我修正建议和具体步骤，辅助 Agent 决定下一步修复动作。支持多种错误类型的自动识别和针对性修正建议。',
       parameters: {
         type: 'object',
         properties: {
@@ -543,7 +807,7 @@ const toolDefinitions = [
           },
           context: {
             type: 'string',
-            description: '可选的上下文描述，例如“调用某某接口时出错”、“解析某段 JSON 时出错”等。'
+            description: '可选的上下文描述，例如“调用某某接口时出错”、“解析某段 JSON 时出错”等，有助于提供更精准的修正建议。'
           }
         },
         required: ['errorMessage']
@@ -569,6 +833,9 @@ async function executeTool(toolName, arguments_) {
         break;
       case 'searchWeb':
         result = await searchWeb(arguments_.query);
+        break;
+      case 'searchImages':
+        result = await searchImages(arguments_.query, arguments_.limit);
         break;
       case 'textProcess':
         result = textProcess(arguments_.text, arguments_.operation);
@@ -598,4 +865,3 @@ module.exports = {
   toolDefinitions,
   executeTool
 };
-

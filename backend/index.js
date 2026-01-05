@@ -121,6 +121,36 @@ function buildContentFromToolResults(toolResults) {
 
     case 'textProcess':
       return `文本处理结果：${typeof parsed === 'string' ? parsed : JSON.stringify(parsed)}`;
+    
+    case 'searchImages':
+      if (parsed && Array.isArray(parsed.results)) {
+        console.log(`🖼️ 图片搜索结果详情: count=${parsed.count}, results.length=${parsed.results.length}`);
+        
+        // 构建响应
+        let response = `🖼️ ${parsed.query}的图片搜索结果（共 ${parsed.count} 张）\n\n`;
+        
+        // 添加图片URL，使用Markdown格式显示图片
+        parsed.results.forEach((result, index) => {
+          if (result.startsWith('![图片')) {
+            // 如果是图片Markdown格式，直接添加
+            response += `${result}\n\n`;
+          } else if (!result.includes('![图片') && !result.includes('图片搜索结果') && !result.includes('找到')) {
+            // 其他文本内容
+            response += `${result}\n`;
+          }
+        });
+        
+        if (parsed.source) {
+          response += `\n📚 图片来源: ${parsed.source}`;
+        }
+        
+        if (parsed.success === false && parsed.error) {
+          response += `\n\n⚠️ 图片搜索失败: ${parsed.error}`;
+        }
+        
+        return response;
+      }
+      return `图片搜索结果：${typeof parsed === 'string' ? parsed : JSON.stringify(parsed)}`;
 
     default:
       return typeof parsed === 'string' ? parsed : JSON.stringify(parsed);
@@ -308,8 +338,200 @@ function analyzeContentForTools(content, messages) {
       console.log('✅ 检测到搜索需求，关键词:', searchQuery);
     }
   }
-  
+    // 检测图片搜索需求
+  if (/图片|照片|图|找图片|搜图|图片搜索|搜图片/gi.test(userContent)) {
+    const imageQuery = userContent
+      .replace(/图片|照片|图|找图片|搜图|图片搜索|搜图片/gi, '')
+      .replace(/关于|的|信息/gi, '')
+      .trim();
+    if (imageQuery && imageQuery.length > 0) {
+      toolCalls.push({
+        id: `images_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        type: 'function',
+        index: toolCalls.length,
+        function: {
+          name: 'searchImages',
+          arguments: JSON.stringify({ query: imageQuery })
+        }
+      });
+      console.log('✅ 检测到图片搜索需求，关键词:', imageQuery);
+    }
+  }
   return toolCalls;
+}
+
+// 对话历史分析功能，用于检测和修正对话中的错误
+function analyzeConversationHistory(messages) {
+  console.log('\n=== 对话历史分析 ===');
+  console.log(`分析 ${messages.length} 条消息`);
+  
+  const issues = [];
+  const analysis = {
+    issues: [],
+    summary: {
+      messageCount: messages.length,
+      userMessageCount: messages.filter(m => m.role === 'user').length,
+      assistantMessageCount: messages.filter(m => m.role === 'assistant').length,
+      toolMessageCount: messages.filter(m => m.role === 'tool').length,
+      systemMessageCount: messages.filter(m => m.role === 'system').length
+    }
+  };
+  
+  // 1. 检测前后不一致的回答
+  const assistantMessages = messages.filter(m => m.role === 'assistant');
+  if (assistantMessages.length > 1) {
+    for (let i = 1; i < assistantMessages.length; i++) {
+      const prevContent = assistantMessages[i-1].content.toLowerCase();
+      const currContent = assistantMessages[i].content.toLowerCase();
+      
+      // 简单的不一致检测：检查是否有直接矛盾的陈述
+      // 例如："是" vs "不是"，"对" vs "错"，"有" vs "没有"
+      const contradictions = [
+        { positive: /是/g, negative: /不是/g },
+        { positive: /对/g, negative: /错/g },
+        { positive: /有/g, negative: /没有/g },
+        { positive: /可以/g, negative: /不可以/g },
+        { positive: /能/g, negative: /不能/g }
+      ];
+      
+      for (const contradiction of contradictions) {
+        if (contradiction.positive.test(prevContent) && contradiction.negative.test(currContent) ||
+            contradiction.negative.test(prevContent) && contradiction.positive.test(currContent)) {
+          issues.push({
+            type: 'inconsistency',
+            severity: 'medium',
+            description: `检测到前后回答不一致：第 ${i} 条和第 ${i+1} 条助手消息可能存在矛盾`,
+            details: {
+              previousMessage: assistantMessages[i-1].content.substring(0, 50) + '...',
+              currentMessage: assistantMessages[i].content.substring(0, 50) + '...',
+              contradictionType: contradiction.positive.source + ' vs ' + contradiction.negative.source
+            }
+          });
+          break;
+        }
+      }
+    }
+  }
+  
+  // 2. 检测遗漏的关键信息
+  // 检查用户问题是否得到完整回答
+  const userMessages = messages.filter(m => m.role === 'user');
+  const toolResults = messages.filter(m => m.role === 'tool');
+  
+  for (let i = 0; i < userMessages.length; i++) {
+    const userMessage = userMessages[i];
+    const userContent = userMessage.content.toLowerCase();
+    
+    // 检查是否有未处理的工具调用结果
+    if (userContent.includes('计算') || userContent.includes('搜索') || userContent.includes('时间')) {
+      const hasRelevantTool = toolResults.some(toolMsg => {
+        const toolContent = toolMsg.content.toLowerCase();
+        return (userContent.includes('计算') && toolMsg.name === 'calculate') ||
+               (userContent.includes('搜索') && toolMsg.name === 'searchWeb') ||
+               (userContent.includes('时间') && toolMsg.name === 'getCurrentTime');
+      });
+      
+      if (!hasRelevantTool) {
+        issues.push({
+          type: 'missing_information',
+          severity: 'low',
+          description: `可能遗漏了关键信息：用户请求了${userContent.includes('计算') ? '计算' : userContent.includes('搜索') ? '搜索' : '时间查询'}，但没有找到相关工具调用结果`,
+          details: {
+            userMessage: userMessage.content.substring(0, 50) + '...'
+          }
+        });
+      }
+    }
+  }
+  
+  // 3. 检测错误的假设或前提
+  // 检查工具调用参数是否合理
+  for (const toolMsg of toolResults) {
+    try {
+      const toolContent = JSON.parse(toolMsg.content);
+      if (toolMsg.name === 'calculate' && toolContent.success) {
+        // 检查计算结果是否合理（例如：避免出现过大的数字）
+        if (Math.abs(toolContent.result) > 1e15) {
+          issues.push({
+            type: 'unreasonable_result',
+            severity: 'medium',
+            description: `检测到不合理的计算结果：${toolContent.result}`,
+            details: {
+              expression: toolContent.expression,
+              result: toolContent.result
+            }
+          });
+        }
+      }
+    } catch (e) {
+      // 忽略解析错误
+    }
+  }
+  
+  // 4. 检测不完整的任务处理
+  // 检查是否有未完成的工具调用
+  const toolCallIds = new Set();
+  const toolResultIds = new Set();
+  
+  for (const msg of messages) {
+    if (msg.tool_calls) {
+      for (const toolCall of msg.tool_calls) {
+        toolCallIds.add(toolCall.id);
+      }
+    }
+    if (msg.tool_call_id) {
+      toolResultIds.add(msg.tool_call_id);
+    }
+  }
+  
+  // 检查是否有工具调用没有对应的结果
+  for (const callId of toolCallIds) {
+    if (!toolResultIds.has(callId)) {
+      issues.push({
+        type: 'incomplete_task',
+        severity: 'high',
+        description: `检测到不完整的任务处理：工具调用 ${callId} 没有对应的结果`,
+        details: {
+          toolCallId: callId
+        }
+      });
+    }
+  }
+  
+  // 5. 检测用户输入错误
+  for (const userMsg of userMessages) {
+    const userContent = userMsg.content;
+    
+    // 简单的拼写错误检测（示例：常见的错别字）
+    const commonTypos = {
+      '计祘': '计算',
+      '搜素': '搜索',
+      '时问': '时间',
+      '加如': '加入',
+      '等与': '等于'
+    };
+    
+    for (const [typo, correct] of Object.entries(commonTypos)) {
+      if (userContent.includes(typo)) {
+        issues.push({
+          type: 'user_input_error',
+          severity: 'low',
+          description: `检测到用户输入错误："${typo}" 应为 "${correct}"`,
+          details: {
+            userMessage: userContent,
+            typo: typo,
+            correction: correct
+          }
+        });
+      }
+    }
+  }
+  
+  analysis.issues = issues;
+  analysis.summary.issueCount = issues.length;
+  
+  console.log('对话历史分析结果:', analysis);
+  return analysis;
 }
 
 // 创建与简化版服务器完全相同的HTTP服务器
@@ -382,7 +604,7 @@ async function handleAgentRequest(messages, res) {
     conversationMessages.unshift({
       role: 'system',
       content: [
-        '你是一个工具增强的助理，具备 ReAct（推理 + 行动）和简单自我修正能力。',
+        '你是一个工具增强的助理，具备 ReAct（推理 + 行动）和强大的自我修正能力。',
         '当用户请求计算或查询信息时：',
         '1）如果已经有明确的工具结果（例如 calculate 的 result），优先直接使用该结果回答，不要重复推导或再次计算相同表达式。',
         '2）不要重复整段解释两次。',
@@ -394,11 +616,39 @@ async function handleAgentRequest(messages, res) {
         '6）当一个大任务完成或用户显式切换到全新话题时，可以调用 clearReasoningLog 清空旧的推理记录，避免后续被旧上下文干扰。',
         '',
         '【错误处理与自我修正】',
-        '7）当你在调用接口、运行代码或使用其他工具时遇到错误，请调用 logErrorAndSuggestFix：',
-        '   - 将完整错误信息传入 errorMessage；',
+        '7）**主动错误检测**：在处理用户请求时，主动检测以下类型的错误：',
+        '   - 用户输入错误（如语法错误、拼写错误、格式错误）；',
+        '   - 思考过程中的逻辑错误（如推理矛盾、前提错误）；',
+        '   - 工具调用参数错误（如参数缺失、格式不正确）；',
+        '   - 计算结果异常（如与常识不符的结果）。',
+        '8）**自我修正步骤**：当检测到错误时，请遵循以下步骤：',
+        '   - 识别错误类型和具体位置；',
+        '   - 调用 logErrorAndSuggestFix 工具记录错误并获取修正建议；',
+        '   - 根据建议生成修正方案；',
+        '   - 执行修正后的操作；',
+        '   - 验证修正结果是否正确。',
+        '9）**用户输入错误处理**：当检测到用户输入错误时：',
+        '   - 友好地指出错误；',
+        '   - 提供正确的输入建议；',
+        '   - 如果可能，自动修正错误并继续处理。',
+        '10）**思考过程错误处理**：当检测到思考过程中的逻辑错误时：',
+        '   - 停止当前的错误推理；',
+        '   - 重新梳理推理步骤；',
+        '   - 记录正确的推理过程；',
+        '   - 继续处理任务。',
+        '11）**工具调用错误处理**：当工具调用失败时：',
+        '   - 将完整错误信息传入 logErrorAndSuggestFix 工具的 errorMessage；',
         '   - 将当前正在做的事情简要写入 context（例如“调用某某工具时出错”、“解析某段 JSON 时出错”）；',
         '   - 阅读返回的 suggestions，根据其中的提示调整你的计划和下一步操作。',
-        '8）如果连续两次尝试都仍然失败，请停止盲目重试，向用户清晰说明你已尝试的步骤、看到的错误以及后续可行的人工排查思路。'
+        '12）**重试策略**：如果连续两次尝试都仍然失败，请停止盲目重试，向用户清晰说明：',
+        '   - 已尝试的步骤；',
+        '   - 看到的错误；',
+        '   - 后续可行的人工排查思路。',
+        '13）**对话历史分析**：定期分析对话历史，检测并修正以下问题：',
+        '   - 前后不一致的回答；',
+        '   - 遗漏的关键信息；',
+        '   - 错误的假设或前提；',
+        '   - 不完整的任务处理。'
       ].join('\n')
     });
     // 系统消息插入后，用户消息索引整体向后移动 1，需要同步更新
@@ -417,6 +667,27 @@ async function handleAgentRequest(messages, res) {
       res.write('data: [DONE]\n\n');
       res.end();
       return;
+    }
+    
+    // 对话历史分析：检测和修正对话中的错误
+    if (iteration > 1) { // 跳过第一次迭代，只在后续迭代中分析
+      const historyAnalysis = analyzeConversationHistory(conversationMessages);
+      if (historyAnalysis.issues.length > 0) {
+        console.log('\n=== 检测到对话问题，正在进行自我修正 ===');
+        
+        // 处理严重问题
+        const criticalIssues = historyAnalysis.issues.filter(issue => issue.severity === 'high');
+        if (criticalIssues.length > 0) {
+          console.log('检测到严重问题:', criticalIssues);
+          // 对于严重问题，记录错误并尝试修正
+          for (const issue of criticalIssues) {
+            await executeTool('logErrorAndSuggestFix', {
+              errorMessage: issue.description,
+              context: `对话历史分析中检测到严重问题`
+            });
+          }
+        }
+      }
     }
     
     // 创建请求体（包含工具定义）
@@ -727,7 +998,56 @@ async function handleAgentRequest(messages, res) {
         } catch (parseError) {
           console.error('解析工具参数失败:', parseError);
           console.error('原始参数:', toolCall.function.arguments);
-          throw new Error(`参数解析失败: ${parseError.message}`);
+          
+          // 调用错误处理工具获取修正建议
+          const errorFixResult = await executeTool('logErrorAndSuggestFix', {
+            errorMessage: parseError.message,
+            context: `解析工具 ${functionName} 的参数时出错`
+          });
+          
+          throw new Error(`参数解析失败: ${parseError.message}。修正建议: ${errorFixResult.suggestions.join('; ')}`);
+        }
+        
+        // 主动检测工具调用参数错误
+        console.log('\n=== 主动检测工具调用参数 ===');
+        let parameterError = false;
+        let errorMessage = '';
+        
+        switch (functionName) {
+          case 'calculate':
+            if (!functionArgs.expression || typeof functionArgs.expression !== 'string') {
+              parameterError = true;
+              errorMessage = '计算工具缺少有效的expression参数';
+            } else if (!/[+\-*/]/.test(functionArgs.expression) || !/\d/.test(functionArgs.expression)) {
+              parameterError = true;
+              errorMessage = '计算表达式必须包含至少一个运算符和一个数字';
+            }
+            break;
+          case 'searchWeb':
+            if (!functionArgs.query || typeof functionArgs.query !== 'string' || functionArgs.query.trim().length < 2) {
+              parameterError = true;
+              errorMessage = '搜索工具需要有效的查询关键词（至少2个字符）';
+            }
+            break;
+          case 'textProcess':
+            if (!functionArgs.text || typeof functionArgs.text !== 'string') {
+              parameterError = true;
+              errorMessage = '文本处理工具缺少有效的text参数';
+            } else if (!functionArgs.operation || !['uppercase', 'lowercase', 'reverse', 'count'].includes(functionArgs.operation)) {
+              parameterError = true;
+              errorMessage = '文本处理工具需要有效的operation参数（uppercase、lowercase、reverse、count）';
+            }
+            break;
+        }
+        
+        if (parameterError) {
+          // 调用错误处理工具获取修正建议
+          const errorFixResult = await executeTool('logErrorAndSuggestFix', {
+            errorMessage: errorMessage,
+            context: `调用工具 ${functionName} 时参数错误`
+          });
+          
+          throw new Error(`${errorMessage}。修正建议: ${errorFixResult.suggestions.join('; ')}`);
         }
         
         console.log(`执行工具: ${functionName}`);
@@ -737,6 +1057,24 @@ async function handleAgentRequest(messages, res) {
         const toolResult = await executeTool(functionName, functionArgs);
         
         console.log('工具执行结果:', JSON.stringify(toolResult, null, 2));
+        
+        // 主动检测计算结果异常
+        if (functionName === 'calculate' && toolResult.success) {
+          const result = toolResult.result;
+          // 检测异常结果：无穷大、NaN、或与常识明显不符的结果
+          if (!isFinite(result) || isNaN(result)) {
+            console.log(`⚠️ 检测到异常计算结果: ${result}`);
+            // 调用错误处理工具获取修正建议
+            const errorFixResult = await executeTool('logErrorAndSuggestFix', {
+              errorMessage: `计算结果异常: ${result}`,
+              context: `计算表达式 ${functionArgs.expression} 得到异常结果`
+            });
+            
+            // 添加警告信息到结果中
+            toolResult.warning = '计算结果可能异常';
+            toolResult.suggestions = errorFixResult.suggestions;
+          }
+        }
         
         // 仅在后台记录工具调用日志
         console.log(`工具 ${functionName} 执行完成`);
@@ -751,11 +1089,21 @@ async function handleAgentRequest(messages, res) {
       } catch (error) {
         console.error('工具执行错误:', error);
         console.error('错误堆栈:', error.stack);
+        
+        // 记录错误并获取修正建议
+        await executeTool('logErrorAndSuggestFix', {
+          errorMessage: error.message,
+          context: `执行工具 ${toolCall.function?.name || 'unknown'} 时出错`
+        });
+        
         toolResults.push({
           role: 'tool',
           tool_call_id: toolCall.id,
           name: toolCall.function?.name || 'unknown',
-          content: JSON.stringify({ error: error.message })
+          content: JSON.stringify({ 
+            error: error.message,
+            suggestion: '请检查输入参数或尝试其他方式'
+          })
         });
       }
     }
